@@ -1,29 +1,41 @@
-
 use std::io::{copy, Write};
 use std::io::Read;
 use std::fs::File;
 use std::collections::HashMap;
 use chrono::{Datelike, Utc};
+use clokwerk::{AsyncScheduler, Job, TimeUnits};
 use tempfile::Builder;
 use walkdir::WalkDir;
+use clokwerk::Interval::*;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
-    
-    let url =  get_picture_of_the_day_url().await.unwrap();
-  
-    let file = download_file(url,"data/pictures").await;
+    picture_of_the_day().await;
+    schedule_downloads().await;
+}
 
+ async fn schedule_downloads(){
+    //use clockwork to run the file download every day at 9:00 am
+    let mut scheduler = AsyncScheduler::new();
+    scheduler.every(1.day()).at("09:00").run(picture_of_the_day);
+
+}
+
+async fn picture_of_the_day(){
+    let url =  get_picture_of_the_day_url().await.unwrap();
+
+    let file = download_file(url,"data/pictures").await;
     match file {
         Ok(_) => {
-           println!("File downloaded successfully");
+            println!("File downloaded successfully");
         }
         Err(e) => {
             println!("Error: {}", e);
         }
     }
-
 }
+
 fn get_date()-> String {
     let today = Utc::today();
     let year = today.year();
@@ -40,7 +52,6 @@ async fn get_picture_of_the_day_url()->Option<String> {
     
     match body.get("url") {
         Some(url) => {
-            println!("{}", url);
             Some(url.to_string())
         },
         None => None
@@ -55,7 +66,7 @@ async fn download_file(target: String,destination:&str)->Result<File,reqwest::Er
         let ext = ext.split("/").last().unwrap();
         let mut file = File::create(format!("{}/{}.{}",destination,file_name,ext)).unwrap();
         let mut bytes = response.bytes().await?;
-        file.write_all(&mut bytes);
+        file.write_all(&mut bytes).unwrap();
         Ok(file)
     } else {
         panic!("Error downloading file: {}", response.status());
