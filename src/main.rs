@@ -1,13 +1,12 @@
-use std::io::{copy, Write};
-use std::io::Read;
+use std::io::{Write};
 use std::fs::File;
 use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 use chrono::{Datelike, Utc};
 use clokwerk::{AsyncScheduler, Job, TimeUnits};
 use tempfile::Builder;
 use walkdir::WalkDir;
-use clokwerk::Interval::*;
-use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
@@ -23,6 +22,7 @@ async fn main() {
 }
 
 async fn picture_of_the_day(){
+    move_older_to_archive();
     let url =  get_picture_of_the_day_url().await.unwrap();
 
     let file = download_file(url,"data/pictures").await;
@@ -88,6 +88,16 @@ fn move_older_to_archive(){
     //read the directory of the today folder.
     let today_folder = "data/pictures/";
 
+    //check if the archive folder exists.
+    if !Path::new(archive_path.as_str()).exists() {
+        //if not, create it.
+        fs::create_dir(archive_path.as_str()).unwrap();
+    }
+    //check if the today folder exists.
+    if !Path::new(today_folder).exists(){
+        fs::create_dir(today_folder).unwrap();
+    }
+    //read the directory of the today folder.
     WalkDir::new(today_folder)
         .into_iter()
         .filter_entry(|e| is_not_hidden(e))
