@@ -5,8 +5,7 @@ use std::fs;
 use std::path::Path;
 use chrono::{Datelike, Utc};
 use clokwerk::{AsyncScheduler, Job, TimeUnits};
-use tempfile::Builder;
-use walkdir::WalkDir;
+use walkdir::{DirEntry, WalkDir};
 
 #[tokio::main]
 async fn main() {
@@ -19,13 +18,21 @@ async fn main() {
     let mut scheduler = AsyncScheduler::new();
     scheduler.every(1.day()).at("09:00").run(picture_of_the_day);
 
+     //keep the main thread alive by looping forever
+     //put the thread to sleep for 10 minutes
+     loop {
+         scheduler.run_pending().await;
+         std::thread::sleep(std::time::Duration::from_secs(600));
+     }
 }
 
 async fn picture_of_the_day(){
-    move_older_to_archive();
+    let archive_dir = "data/archive/";
+    let today_dir = "data/pictures/";
+    move_older_to_archive(today_dir,archive_dir);
     let url =  get_picture_of_the_day_url().await.unwrap();
 
-    let file = download_file(url,"data/pictures").await;
+    let file = download_file(url,today_dir).await;
     match file {
         Ok(_) => {
             println!("File downloaded successfully");
@@ -81,32 +88,103 @@ fn is_not_hidden(entry: &walkdir::DirEntry) -> bool {
          .unwrap_or(false)
 }
 
-fn move_older_to_archive(){
-    
-    // move any content inside the today folder to the archive folder.
-    let archive_path = "data/archive/".to_string();
-    //read the directory of the today folder.
-    let today_folder = "data/pictures/";
+fn create_path_if_not_exists(path:&str){
+    if !Path::new(path).exists() {
+        fs::create_dir_all(path).unwrap();
+    }
+}
 
-    //check if the archive folder exists.
-    if !Path::new(archive_path.as_str()).exists() {
-        //if not, create it.
-        fs::create_dir(archive_path.as_str()).unwrap();
-    }
-    //check if the today folder exists.
-    if !Path::new(today_folder).exists(){
-        fs::create_dir(today_folder).unwrap();
-    }
-    //read the directory of the today folder.
-    WalkDir::new(today_folder)
-        .into_iter()
+fn loop_over_dir<F:FnMut(walkdir::DirEntry)>(dir:&str, callback:F){
+    WalkDir::new(dir).into_iter()
         .filter_entry(|e| is_not_hidden(e))
         .filter_map(|v| v.ok())
-        .for_each(|x| {
-            // rename the file to the archive folder.
-            let mut new_path = archive_path.clone();
-            new_path.push_str(x.file_name().to_str().unwrap());
-            std::fs::rename(x.path(), new_path).unwrap();
-        } );
+        .for_each(callback);
+
+}
+
+fn move_older_to_archive(from:&str, to:&str){
+
+    create_path_if_not_exists(from);
+    create_path_if_not_exists(to);
+
+   let  move_to_archive = |entry:DirEntry|{
+        if !entry.metadata().unwrap().is_dir()  {
+            let mut new_path = to.to_string();
+            new_path.push_str(entry.file_name().to_str().unwrap());
+            std::fs::rename(entry.path(), new_path).unwrap();
+        }
+
+    };
+    loop_over_dir(from, &move_to_archive);
+}
+
+pub mod test {
+    use std::fs::File;
+    use std::path::Path;
+    use crate::{create_path_if_not_exists, move_older_to_archive};
+    use walkdir::{WalkDir};
+
+    #[test]
+    fn _older_to_archive(){
+       //create 2 files in a temp dir
+       let temp_dir = "data/temp/";
+       let archive_dir = "data/temp_archive/";
+
+        create_path_if_not_exists(temp_dir);
+        create_path_if_not_exists(archive_dir);
+
+        let file1_temp = format!("{}/file1.txt",temp_dir);
+        let file2_temp = format!("{}/file2.txt",temp_dir);
+        //create 2 files in a temp dir
+        File::create(file1_temp.as_str()).unwrap();
+        File::create(file2_temp.as_str()).unwrap();
+
+        move_older_to_archive(temp_dir,archive_dir);
+
+        let file1_archive = format!("{}/file1.txt",archive_dir);
+        let file2_archive = format!("{}/file2.txt",archive_dir);
+        //check if the files are in the archive dir
+        //try opening the files in the temp dir
+        let file_1_path = Path::new(file1_archive.as_str());
+        let file_2_path = Path::new(file2_archive.as_str());
+        assert!(file_1_path.exists());
+        assert!(file_2_path.exists());
+
+        //check if the files are in the temp dir
+        let file_1_path = Path::new(file1_temp.as_str());
+        let file_2_path = Path::new(file2_temp.as_str());
+        assert!(!file_1_path.exists());
+        assert!(!file_2_path.exists());
+
+        //cleanup
+        std::fs::remove_dir_all(temp_dir).unwrap();
+        std::fs::remove_dir_all(archive_dir).unwrap();
+    }
+
+    #[test]
+    fn create_if_not_exists(){
+        let path = "temp/archive/";
+        crate::create_path_if_not_exists(path);
+        assert!(Path::new(path).exists());
+        //clean up
+        std::fs::remove_dir_all(path).unwrap();
+        assert!(!Path::new(path).exists());
+    }
+
+    #[test]
+    fn _is_not_hidden(){
+        let entry = WalkDir::new(".").into_iter().next().unwrap().unwrap();
+        assert!(crate::is_not_hidden(&entry));
+    }
+
+    #[test]
+    fn _loop_over_dir(){
+        let mut count = 0;
+        let callback =  |_|{
+            count += 1;
+        };
+        crate::loop_over_dir(".", callback);
+        assert!(count > 0);
+    }
 
 }
