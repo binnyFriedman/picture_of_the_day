@@ -1,7 +1,7 @@
 use std::io::{Write};
 use std::fs::File;
 use std::collections::HashMap;
-use std::fs;
+use std::{fs, io};
 use std::path::Path;
 use chrono::{Datelike, Utc};
 use clokwerk::{AsyncScheduler, Job, TimeUnits};
@@ -9,14 +9,19 @@ use walkdir::{DirEntry, WalkDir};
 
 #[tokio::main]
 async fn main() {
-    picture_of_the_day().await;
+    picture_of_the_day_to_data_folder().await;
     schedule_downloads().await;
 }
 
- async fn schedule_downloads(){
+async fn picture_of_the_day_to_data_folder(){
+    picture_of_the_day("data/archive/","data/pictures").await;
+}
+
+ async fn schedule_downloads() {
     //use clockwork to run the file download every day at 9:00 am
     let mut scheduler = AsyncScheduler::new();
-    scheduler.every(1.day()).at("09:00").run(picture_of_the_day);
+    scheduler.every(1.day()).at("09:00").run(picture_of_the_day_to_data_folder);
+
 
      //keep the main thread alive by looping forever
      //put the thread to sleep for 10 minutes
@@ -26,21 +31,10 @@ async fn main() {
      }
 }
 
-async fn picture_of_the_day(){
-    let archive_dir = "data/archive/";
-    let today_dir = "data/pictures/";
-    move_older_to_archive(today_dir,archive_dir);
-    let url =  get_picture_of_the_day_url().await.unwrap();
-
-    let file = download_file(url,today_dir).await;
-    match file {
-        Ok(_) => {
-            println!("File downloaded successfully");
-        }
-        Err(e) => {
-            println!("Error: {}", e);
-        }
-    }
+async fn picture_of_the_day(archive_dir: &str, download_dir: &str) {
+    let url =  get_picture_of_the_day_url() .await.expect("Could not get picture of the day url");
+    move_older_to_archive(download_dir,archive_dir).expect("Could not move older files to archive");
+    download_file(url,download_dir).await.expect("Could not download file");
 }
 
 fn get_date()-> String {
@@ -52,32 +46,28 @@ fn get_date()-> String {
     date
 }
 
-async fn get_picture_of_the_day_url()->Option<String> {
+async fn get_picture_of_the_day_url()->Result<String,String> {
     let endpoint = "https://bing.biturl.top";
     let resp = reqwest::get(endpoint).await.unwrap();
     let body = resp.json::<HashMap<String, String>>().await.unwrap();
-    
-    match body.get("url") {
-        Some(url) => {
-            Some(url.to_string())
-        },
-        None => None
-    }
+
+   let url =  body.get("url");
+   match url {
+       Some(url) => Ok(url.to_string()),
+       None => Err("No url found".to_string())
+   }
 }
 
 async fn download_file(target: String,destination:&str)->Result<File,reqwest::Error> {
     let response = reqwest::get(target).await?;
-    if response.status().is_success() {
-        let file_name = get_date();
-        let ext = response.headers().get("content-type").unwrap().to_str().unwrap();
-        let ext = ext.split("/").last().unwrap();
-        let mut file = File::create(format!("{}/{}.{}",destination,file_name,ext)).unwrap();
-        let mut bytes = response.bytes().await?;
-        file.write_all(&mut bytes).unwrap();
-        Ok(file)
-    } else {
-        panic!("Error downloading file: {}", response.status());
-    }
+    let file_name = get_date();
+    let ext = response.headers().get("content-type").unwrap().to_str().unwrap();
+    let ext = ext.split("/").last().unwrap();
+    let mut file = File::create(format!("{}/{}.{}",destination,file_name,ext))
+        .expect(format!("Could not create file in destination {}",destination).as_str());
+    let mut bytes = response.bytes().await?;
+    file.write_all(&mut bytes).expect("Could not write file the downloaded file");
+    Ok(file)
 }
 
 fn is_not_hidden(entry: &walkdir::DirEntry) -> bool {
@@ -102,20 +92,20 @@ fn loop_over_dir<F:FnMut(walkdir::DirEntry)>(dir:&str, callback:F){
 
 }
 
-fn move_older_to_archive(from:&str, to:&str){
+fn move_older_to_archive(from:&str, to:&str)->Result<(),io::Error>{
 
     create_path_if_not_exists(from);
     create_path_if_not_exists(to);
 
    let  move_to_archive = |entry:DirEntry|{
-        if !entry.metadata().unwrap().is_dir()  {
+        if !entry.metadata().unwrap().is_dir() {
             let mut new_path = to.to_string();
             new_path.push_str(entry.file_name().to_str().unwrap());
             std::fs::rename(entry.path(), new_path).unwrap();
         }
-
     };
     loop_over_dir(from, &move_to_archive);
+    Ok(())
 }
 
 pub mod test {
@@ -139,7 +129,7 @@ pub mod test {
         File::create(file1_temp.as_str()).unwrap();
         File::create(file2_temp.as_str()).unwrap();
 
-        move_older_to_archive(temp_dir,archive_dir);
+        move_older_to_archive(temp_dir,archive_dir).unwrap();
 
         let file1_archive = format!("{}/file1.txt",archive_dir);
         let file2_archive = format!("{}/file2.txt",archive_dir);
