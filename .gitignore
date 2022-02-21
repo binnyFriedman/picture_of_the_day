@@ -1,4 +1,6 @@
 /target
-/data
+/data/archive/*
+/data/pictures/*
 /.idea
 /.vscode
+**/*.log
