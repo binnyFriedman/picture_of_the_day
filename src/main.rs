@@ -3,14 +3,20 @@ use std::fs::File;
 use std::collections::HashMap;
 use std::{fs};
 use std::path::Path;
+use std::env;
 use chrono::{Datelike, Utc};
 use walkdir::{DirEntry, WalkDir};
 
 #[tokio::main]
 async fn main() {
-    picture_of_the_day("data/archive/","data/pictures").await;
+    // get the path to the directory
+    let pictures_path = env::args().nth(1).expect("Please provide a path to a directory");
+    let archive_path = env::args().nth(2).expect("Please provide a path to an archive");
+
+    picture_of_the_day(&archive_path,&pictures_path).await;
     println!("Downloaded picture of the day {}", Utc::today().format("%Y-%m-%d"));
 }
+
 
 
 async fn picture_of_the_day(archive_dir: &str, download_dir: &str) {
@@ -82,9 +88,8 @@ async fn download_file(target: &str,destination:&str)->Result<File,String> {
         Err(_) => "txt".to_string()
     };
     
-
-    let mut file = File::create(format!("{}/{}.{}",destination,file_name,ext))
-        .expect(format!("Could not create file in destination {}",destination).as_str());
+    let path = Path::new(destination).join(format!("{}.{}", file_name, ext));
+    let mut file = File::create(path).expect(format!("Could not create file in destination {}",destination).as_str());
     let bytes = response.bytes().await;
     if bytes.is_err() {
         return Err(format!("Could not get bytes from {}", target));
@@ -130,8 +135,7 @@ fn move_older_to_archive(from:&str, to:&str)->Result<(),String>{
 
    let  move_to_archive = |entry:DirEntry|{
         if !entry.metadata().unwrap().is_dir() {
-            let mut new_path = to.to_string();
-            new_path.push_str(entry.file_name().to_str().unwrap());
+            let new_path = Path::new(to).join(entry.file_name());
             std::fs::rename(entry.path(), new_path).unwrap();
         }
     };
